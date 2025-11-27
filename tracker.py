@@ -49,6 +49,13 @@ def index():
 
 @app.route('/api/tasks', methods=['GET','POST'])
 def api_tasks():
+    # Ensure tables exist before operating - useful on serverless hosts where
+    # import-time creation may not run in the same runtime that handles requests.
+    try:
+        db.create_all()
+    except Exception:
+        logging.exception('create_all failed at request start')
+
     if request.method=='POST':
         try:
             data=request.json
@@ -73,6 +80,12 @@ def api_tasks():
 
 @app.route('/api/tasks/<int:id>', methods=['PUT','DELETE'])
 def api_task(id):
+    # Ensure tables exist before operating (see note in api_tasks)
+    try:
+        db.create_all()
+    except Exception:
+        logging.exception('create_all failed at request start')
+
     t=Task.query.get_or_404(id)
     if request.method=='PUT':
         try:
