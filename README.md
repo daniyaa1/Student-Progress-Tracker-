@@ -6,6 +6,9 @@ A small Flask-based web app to track study tasks, promote milestones, and visual
 
 This repository contains a working local-development app (Flask + SQLite) and a single-page frontend that uses the API for persistence.
 
+
+## Live App Link : https://student-progress-tracker-88m3.vercel.app/
+
 ## Features
 - Task management: add, edit, delete tasks with name, due date, subject
 - Notes & priority: tasks store optional notes and priority (low/medium/high)
