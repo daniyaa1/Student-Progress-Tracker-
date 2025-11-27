@@ -120,7 +120,14 @@
       showStatus('Adding task...');
       try{
         const res = await fetch('/api/tasks', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-        tasks = await res.json();
+        // Try to parse JSON body (may contain error details)
+        const body = await res.json().catch(()=>null);
+        if(!res.ok){
+          const errMsg = body && body.error ? body.error : ('Status '+res.status);
+          showStatus('Failed to add task: '+errMsg, true);
+          return;
+        }
+        tasks = body || [];
         // reset form
         e.target.reset();
         if(addBtn) addBtn.disabled = true;
