@@ -19,7 +19,7 @@ This repository contains a working local-development app (Flask + SQLite) and a 
 - Clean and simple REST API architecture to separate frontend and backend concerns
 
  ---
-## Add Tech Stack + Architecture overview
+
 
 
 ## Tech Stack
