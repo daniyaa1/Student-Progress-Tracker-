@@ -104,11 +104,14 @@
       }catch(err){ console.error('fetchTasks', err); showStatus('Failed to load tasks', true); }
     }
 
-    // form handling with validation
-    const addBtn = document.getElementById('addBtn');
-    const taskNameInput = document.getElementById('taskName');
-    if(taskNameInput) taskNameInput.addEventListener('input', ()=> addBtn.disabled = !taskNameInput.value.trim());
-    if(addBtn) addBtn.disabled = true;
+  // form handling with validation
+  const addBtn = document.getElementById('addBtn');
+  // define the DOM inputs used by the submit handler (previously code referenced undefined names)
+  const taskName = document.getElementById('taskName');
+  const taskDue = document.getElementById('taskDue');
+  const taskSubject = document.getElementById('taskSubject');
+  if(taskName) taskName.addEventListener('input', ()=> addBtn.disabled = !taskName.value.trim());
+  if(addBtn) addBtn.disabled = true;
 
     document.getElementById('taskForm').onsubmit = async e => {
       e.preventDefault();
