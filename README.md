@@ -50,15 +50,4 @@ python tests/api_integration_test.py
 - `static/tracker.css` — styles and UI assets
 - `tests/api_integration_test.py` — integration tests (create/update/milestone/delete)
 
-## Deployment notes
-- The project currently uses the Flask development server and SQLite; this is fine for local demos but not recommended for production.
-- Quick demo: use Gunicorn + single-instance SQLite (suitable for demos). Add `gunicorn` to `requirements.txt` and a Procfile with `web: gunicorn tracker:app --bind 0.0.0.0:$PORT`.
-- Production: use a managed Postgres, add `Flask-Migrate`/Alembic, environment-based config (DATABASE_URL, SECRET_KEY), and a proper WSGI server or container.
-
-## Next steps I can help with
-- Add a `Procfile` and add `gunicorn` to `requirements.txt` for quick deploy.
-- Scaffold a `Dockerfile` and `docker-compose.yml` for production-like deployment with Postgres.
-- Add `Flask-Migrate` and generate an initial migration.
-
----
-Updated: November 27, 2025
+Made by Daniya
