@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Student Progress Tracker</title>
+  <link href="https://fonts.googleapis.com/css?family=Rubik:400,500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='tracker.css') }}">
+  <style>
+    /* keep layout rules minimal here and rely on static/tracker.css for appearance */
+    body { font-family: 'Rubik', sans-serif; margin: 24px; color: #333; }
+    /* make container slightly translucent so the gradient shows through like the screenshots */
+    .container { max-width: 980px; margin: auto; background: rgba(255,255,255,0.92); padding: 28px; border-radius: 14px; box-shadow: 0 10px 30px rgba(0,0,0,0.12); }
+    h1 { text-align:center; margin-bottom:1em; color:#2b6cb0; font-weight:500; }
+    form { display:flex; gap:1em; flex-wrap:wrap; margin-bottom:1.25em; }
+    form input, form select { flex:1; padding:0.6em; border:1px solid #e2e8f0; border-radius:8px; }
+    form button { padding:0.6em 1.2em; background:linear-gradient(90deg,#4A90E2,#6C63FF); color:#fff; border:none; border-radius:8px; cursor:pointer; box-shadow:0 4px 12px rgba(76,90,255,0.15); }
+    .dashboard { display:flex; gap:.6em; justify-content:space-between; margin-bottom:1em; }
+    .pill { flex:1; background:rgba(230,241,250,0.8); padding:1em; text-align:center; border-radius:12px; }
+    .timer { display:flex; align-items:center; justify-content:center; gap:.8em; margin-bottom:1em; }
+    .timer button { margin:0 .5em; padding:.5em 1em; border-radius:8px; }
+    .progress-bar { background:#f1f5f9; height:28px; border-radius:14px; overflow:hidden; }
+    .progress-fill { background:#2ecc71; height:100%; width:0; text-align:center; line-height:28px; color:#fff; font-weight:600; }
+    .tasks .task { display:flex; align-items:center; justify-content:space-between; padding:.8em; border-radius:10px; margin-bottom:.5em; background:linear-gradient(180deg,#ffffff,#fbfbff); box-shadow: 0 2px 6px rgba(16,24,40,0.04); }
+    .empty { text-align:center; color:#6b7280; padding:2em 0; }
+    .milestones, .medals { margin-top:1em; }
+    .milestone, .medal { background:#fff3cd; padding:.5em; border-radius:6px; margin-bottom:.5em; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎓 Progress Tracker</h1>
+    <div class="dashboard">
+      <div class="pill" id="daily-pct">0%</div>
+      <div class="pill" id="weekly-pct">0%</div>
+      <div class="pill" id="monthly-pct">0%</div>
+    </div>
+
+    <div class="timer">
+      <button id="startTimer">Start 25 min</button>
+      <span id="timerDisplay">00:00</span>
+      <button id="stopTimer">Stop</button>
+    </div>
+
+    <form id="taskForm">
+      <input type="text" id="taskName" placeholder="Task name" required>
+      <input type="date" id="taskDue">
+      <select id="taskSubject"><option value="">Subject (opt.)</option><option>Math</option><option>Physics</option><option>English</option></select>
+      <button type="submit" id="addBtn">Add Task</button>
+    </form>
+
+    <div id="status" aria-live="polite" style="min-height:1.4em;margin-bottom:0.5em;color:#444"></div>
+
+    <div class="progress-bar"><div class="progress-fill" id="progBar">0%</div></div>
+
+  <div class="tasks" id="taskList"></div>
+
+    <div class="charts" style="display:flex;gap:1em;margin-top:1em;flex-wrap:wrap;">
+      <div style="flex:1;min-width:220px"><canvas id="subjectChart"></canvas></div>
+      <div style="flex:1;min-width:320px"><canvas id="trendChart"></canvas></div>
+    </div>
+
+    <!-- Edit modal -->
+    <div id="editModal" class="modal" aria-hidden="true" style="display:none;">
+      <div class="modal-content">
+        <h3>Edit Task</h3>
+        <form id="editForm">
+          <input type="hidden" id="editId">
+          <input type="text" id="editName" placeholder="Task name" required>
+          <input type="date" id="editDue">
+          <select id="editSubject"><option value="">Subject (opt.)</option><option>Math</option><option>Physics</option><option>English</option></select>
+          <select id="editPriority"><option value="low">Low</option><option value="medium" selected>Medium</option><option value="high">High</option></select>
+          <textarea id="editNotes" placeholder="Notes (optional)" rows="3"></textarea>
+          <div style="display:flex;gap:.5em;margin-top:.5em;"><button type="submit">Save</button><button type="button" id="editCancel">Cancel</button></div>
+        </form>
+      </div>
+    </div>
+
+    <h2>Milestones</h2><div id="milestones" class="milestones"></div>
+
+    <h2>Medals & Streak</h2><div id="medals" class="medals"></div>
+  </div>
+
+  <script>
+    // Load Chart.js dynamically
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    // Use the Flask API for persistence instead of localStorage
+    let tasks = [];
+    let timerInterval, timerSecs = 0;
+
+    // UI status helpers
+    const statusEl = document.getElementById('status');
+    function showStatus(msg, isError=false){ if(statusEl) { statusEl.textContent = msg; statusEl.style.color = isError? '#b00020':'#444'; } }
+    function clearStatus(){ if(statusEl) statusEl.textContent = ''; }
+
+    async function fetchTasks(){
+      showStatus('Loading tasks...');
+      try{
+        const res = await fetch('/api/tasks');
+        tasks = await res.json();
+        render(); updateProgress(); renderMilestones(); renderMedals(); updateCharts();
+        clearStatus();
+      }catch(err){ console.error('fetchTasks', err); showStatus('Failed to load tasks', true); }
+    }
+
+    // form handling with validation
+    const addBtn = document.getElementById('addBtn');
+    const taskNameInput = document.getElementById('taskName');
+    if(taskNameInput) taskNameInput.addEventListener('input', ()=> addBtn.disabled = !taskNameInput.value.trim());
+    if(addBtn) addBtn.disabled = true;
+
+    document.getElementById('taskForm').onsubmit = async e => {
+      e.preventDefault();
+      const payload = { name: taskName.value.trim(), due: taskDue.value, subj: taskSubject.value };
+      if(!payload.name){ showStatus('Please enter a task name', true); return; }
+      showStatus('Adding task...');
+      try{
+        const res = await fetch('/api/tasks', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+        tasks = await res.json();
+        // reset form
+        e.target.reset();
+        if(addBtn) addBtn.disabled = true;
+        render(); updateProgress(); renderMilestones(); renderMedals();
+        showStatus('Task added');
+      }catch(err){ console.error('add task', err); showStatus('Failed to add task', true); }
+    };
+
+    document.getElementById('startTimer').onclick = () => {
+      timerSecs = 25*60; document.getElementById('timerDisplay').textContent = '25:00';
+      timerInterval = setInterval(()=>{
+        timerSecs--;
+        const m = Math.floor(timerSecs/60), s = timerSecs%60;
+        document.getElementById('timerDisplay').textContent = `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+        if(timerSecs<=0) clearInterval(timerInterval);
+      },1000);
+    };
+    document.getElementById('stopTimer').onclick = ()=>clearInterval(timerInterval);
+
+    function render(){
+      const c = document.getElementById('taskList');
+      c.innerHTML = '';
+      tasks.forEach(t => {
+  const div = document.createElement('div'); div.className='task';
+  const star = t.milestone ? '⭐' : '☆';
+  div.innerHTML = `<label style="flex:1"><input type=\"checkbox\" ${t.done?'checked':''} data-id=\"${t.id}\"> <span style=\"margin-left:.6em;\">${star} ${t.name} ${t.subj?`[${t.subj}]`:''}${t.due?` (${t.due})`:''}</span>
+       <div style=\"font-size:.85em;color:#6b7280;margin-top:.25em;\">${t.notes? t.notes : ''}</div></label>
+       <div style=\"display:flex;gap:.4em;align-items:center;\"><button data-milestone=\"${t.id}\">${t.milestone? 'Promoted' : 'Promote'}</button><button data-edit=\"${t.id}\">✏</button><button data-del=\"${t.id}\">🗑</button></div>`;
+        c.appendChild(div);
+
+        // checkbox handler
+        const chk = div.querySelector('input[type="checkbox"]');
+        chk.addEventListener('change', async () => {
+          const id = chk.dataset.id;
+          const payload = { name: t.name, due: t.due, subj: t.subj, done: chk.checked };
+          try{
+            showStatus('Updating task...');
+            await fetch(`/api/tasks/${id}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+            await fetchTasks();
+            showStatus('Task updated');
+          }catch(err){ console.error('update done', err); showStatus('Update failed', true); }
+        });
+
+        // milestone button
+        div.querySelector('[data-milestone]').addEventListener('click', async () => {
+          const id = div.querySelector('[data-milestone]').dataset.milestone;
+          try{ showStatus('Toggling milestone...'); await toggleMilestone(id); await fetchTasks(); showStatus('Updated'); }
+          catch(err){ console.error('milestone', err); showStatus('Failed', true); }
+        });
+
+        // edit button -> open modal
+        div.querySelector('[data-edit]').addEventListener('click', () => { const id = div.querySelector('[data-edit]').dataset.edit; openEdit(id); });
+
+        // delete button
+        div.querySelector('[data-del]').addEventListener('click', async () => {
+          const id = div.querySelector('[data-del]').dataset.del;
+          try{ showStatus('Deleting...'); await fetch(`/api/tasks/${id}`, { method:'DELETE' }); await fetchTasks(); showStatus('Deleted'); }
+          catch(err){ console.error('delete', err); showStatus('Delete failed', true); }
+        });
+      });
+    }
+
+    async function toggleMilestone(id){
+      const t = tasks.find(x=>x.id==id);
+      if(!t) return;
+      const payload = { milestone: !t.milestone };
+      await fetch(`/api/tasks/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    }
+
+    function updateProgress(){
+      const total = tasks.length, done = tasks.filter(t=>t.done).length;
+      const pct = total ? Math.round(done/total*100) : 0;
+      document.getElementById('progBar').style.width = pct+'%'; document.getElementById('progBar').textContent = pct+'%';
+      ['daily','weekly','monthly'].forEach(id=>document.getElementById(id+'-pct').textContent = pct+'%');
+    }
+
+    function renderMilestones(){
+      const m = document.getElementById('milestones'); m.innerHTML = '';
+      // Show tasks that have been promoted to milestone
+      const promoted = tasks.filter(t=>t.milestone).sort((a,b)=>new Date(a.due||'2100-01-01')-new Date(b.due||'2100-01-01'));
+      if(promoted.length===0){ m.innerHTML = '<div class="milestone">No milestones yet. Promote important tasks.</div>'; return; }
+      promoted.slice(0,10).forEach(t=> m.innerHTML += `<div class="milestone">${t.name}${t.due? ' — due '+t.due: ''}</div>`);
+    }
+
+    function renderMedals(){
+      const m = document.getElementById('medals'); m.innerHTML = '';
+      // Build a set of dates (YYYY-MM-DD) where at least one task was completed
+      const completedDates = new Set();
+      tasks.filter(t=>t.done).forEach(t=>{
+        const ts = t.updated_at || t.created_at;
+        if(!ts) return;
+        completedDates.add(new Date(ts).toISOString().slice(0,10));
+      });
+
+      const today = new Date();
+      const todayStr = today.toISOString().slice(0,10);
+      const todayCount = tasks.filter(t=>t.done && ((t.updated_at||t.created_at)||'').slice(0,10)===todayStr).length;
+      const medal = todayCount>=4 ? '🥇' : (todayCount>=3 ? '🥈' : (todayCount>=2 ? '🥉' : ''));
+
+      // compute current streak (consecutive days including today)
+      let streak = 0;
+      let d = new Date();
+      while(true){
+        const s = d.toISOString().slice(0,10);
+        if(completedDates.has(s)){ streak++; d.setDate(d.getDate()-1); }
+        else break;
+      }
+
+      // compute longest streak from the set of dates
+      const datesArr = Array.from(completedDates).sort();
+      let longest = 0, cur = 0, prev = null;
+      datesArr.forEach(ds => {
+        if(prev && (new Date(ds) - new Date(prev) === 24*60*60*1000)){
+          cur += 1;
+        } else {
+          cur = 1;
+        }
+        if(cur > longest) longest = cur;
+        prev = ds;
+      });
+
+      let html = '';
+      if(medal) html += `<div class="medal">Today's medal: ${medal} (${todayCount} completed)</div>`;
+      html += `<div class="milestone">Current streak: ${streak} day${streak!==1?'s':''} · Longest streak: ${longest} day${longest!==1?'s':''}</div>`;
+      m.innerHTML = html;
+    }
+
+    // Charts: subject breakdown and completion trend
+    let subjectChart=null, trendChart=null;
+    function initCharts(){
+      try{
+        const sCtx = document.getElementById('subjectChart').getContext('2d');
+        subjectChart = new Chart(sCtx, { type:'doughnut', data:{ labels:[], datasets:[{ data:[], backgroundColor: ['#4A90E2','#6C63FF','#16a34a','#f59e0b','#ef4444'] }] }, options:{ responsive:true, plugins:{ legend:{position:'bottom'} } } });
+
+        const tCtx = document.getElementById('trendChart').getContext('2d');
+        trendChart = new Chart(tCtx, { type:'bar', data:{ labels:[], datasets:[{ label:'Completed', data:[], backgroundColor:'#34d399' }] }, options:{ responsive:true, scales:{ y:{ beginAtZero:true } } } });
+      }catch(e){ console.warn('Chart init failed', e); }
+    }
+
+    function updateCharts(){
+      if(!subjectChart || !trendChart) return;
+      // subject breakdown
+      const subjCounts = {};
+      tasks.forEach(t=>{ const k = t.subj || 'Other'; subjCounts[k] = (subjCounts[k]||0)+1; });
+      const labels = Object.keys(subjCounts);
+      subjectChart.data.labels = labels;
+      subjectChart.data.datasets[0].data = labels.map(l=>subjCounts[l]);
+      subjectChart.update();
+
+      // trend: completed per day for last 7 days using updated_at timestamps
+      const days=7; const counts=[]; const labels2=[];
+      for(let i=days-1;i>=0;i--){ const d=new Date(); d.setDate(d.getDate()-i); labels2.push(d.toISOString().slice(0,10)); counts.push(0); }
+      tasks.filter(t=>t.done).forEach(t=>{
+        const ts = t.updated_at || t.created_at;
+        if(!ts) return;
+        const d = new Date(ts).toISOString().slice(0,10);
+        const idx = labels2.indexOf(d);
+        if(idx>=0) counts[idx]++;
+      });
+      trendChart.data.labels = labels2;
+      trendChart.data.datasets[0].data = counts;
+      trendChart.update();
+    }
+
+    // Initial load and periodic refresh
+    fetchTasks();
+    setInterval(fetchTasks, 30000);
+    // Edit modal wiring
+    const editModal = document.getElementById('editModal');
+    const editForm = document.getElementById('editForm');
+    document.getElementById('editCancel').addEventListener('click', ()=>{ editModal.style.display='none'; });
+    window.openEdit = (id)=>{
+      const t = tasks.find(x=>x.id==id);
+      if(!t) return;
+      document.getElementById('editId').value = t.id;
+      document.getElementById('editName').value = t.name || '';
+      document.getElementById('editDue').value = t.due || '';
+      document.getElementById('editSubject').value = t.subj || '';
+      document.getElementById('editPriority').value = t.priority || 'medium';
+      document.getElementById('editNotes').value = t.notes || '';
+      editModal.style.display = 'block';
+    };
+    editForm.addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const id = document.getElementById('editId').value;
+      const payload = { name: document.getElementById('editName').value.trim(), due: document.getElementById('editDue').value, subj: document.getElementById('editSubject').value, notes: document.getElementById('editNotes').value, priority: document.getElementById('editPriority').value, done: false };
+      try{ showStatus('Saving...'); await fetch(`/api/tasks/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)}); await fetchTasks(); editModal.style.display='none'; showStatus('Saved'); }
+      catch(err){ console.error('save edit', err); showStatus('Save failed', true); }
+    });
+  </script>
+</body>
+</html>
