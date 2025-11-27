@@ -1,10 +1,34 @@
 from flask import Flask, request, render_template, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
+import os
+import logging
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI']='sqlite:///tasks.db'
+# Choose a sensible DB URI depending on the environment:
+# - If a DATABASE_URL (managed DB) is provided, use it
+# - On serverless hosts like Vercel, use a writable temp path (/tmp)
+# - Otherwise fall back to local file `tasks.db` for development
+db_uri = os.environ.get('DATABASE_URL')
+if not db_uri:
+    # Detect Vercel-like environment via VERCEL env var, but fall back to /tmp
+    if os.environ.get('VERCEL'):
+        db_uri = 'sqlite:////tmp/tasks.db'
+    else:
+        # relative file for local development
+        db_uri = 'sqlite:///tasks.db'
+
+app.config['SQLALCHEMY_DATABASE_URI'] = db_uri
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
+
+# Ensure tables exist on import so hosting platforms that import the app
+# (rather than executing __main__) have the DB schema available.
+with app.app_context():
+    try:
+        db.create_all()
+    except Exception:
+        logging.exception('Failed to create DB tables on startup')
 
 class Task(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -26,9 +50,14 @@ def index():
 @app.route('/api/tasks', methods=['GET','POST'])
 def api_tasks():
     if request.method=='POST':
-        data=request.json
-        t=Task(name=data['name'],due=data.get('due',''),subj=data.get('subj',''),done=False, milestone=data.get('milestone', False), notes=data.get('notes',''), priority=data.get('priority','medium'))
-        db.session.add(t); db.session.commit()
+        try:
+            data=request.json
+            t=Task(name=data['name'],due=data.get('due',''),subj=data.get('subj',''),done=False, milestone=data.get('milestone', False), notes=data.get('notes',''), priority=data.get('priority','medium'))
+            db.session.add(t)
+            db.session.commit()
+        except Exception as e:
+            logging.exception('Failed to add task')
+            return jsonify({'ok': False, 'error': str(e)}), 500
     return jsonify([{
         'id':t.id,
         'name':t.name,
@@ -46,20 +75,29 @@ def api_tasks():
 def api_task(id):
     t=Task.query.get_or_404(id)
     if request.method=='PUT':
-        data=request.json
-        t.name = data.get('name', t.name)
-        t.due = data.get('due', t.due)
-        t.subj = data.get('subj', t.subj)
-        t.done = data.get('done', t.done)
-        # allow toggling/setting milestone from the client
-        if 'milestone' in data:
-            t.milestone = bool(data.get('milestone'))
-        t.notes = data.get('notes', t.notes)
-        t.priority = data.get('priority', t.priority)
+        try:
+            data=request.json
+            t.name = data.get('name', t.name)
+            t.due = data.get('due', t.due)
+            t.subj = data.get('subj', t.subj)
+            t.done = data.get('done', t.done)
+            # allow toggling/setting milestone from the client
+            if 'milestone' in data:
+                t.milestone = bool(data.get('milestone'))
+            t.notes = data.get('notes', t.notes)
+            t.priority = data.get('priority', t.priority)
+            db.session.commit()
+            return jsonify(ok=True)
+        except Exception:
+            logging.exception('Failed to update task %s', id)
+            return jsonify(ok=False), 500
+    try:
+        db.session.delete(t)
         db.session.commit()
         return jsonify(ok=True)
-    db.session.delete(t); db.session.commit()
-    return jsonify(ok=True)
+    except Exception:
+        logging.exception('Failed to delete task %s', id)
+        return jsonify(ok=False), 500
 
 
 @app.route('/health')
